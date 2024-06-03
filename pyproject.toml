@@ -1,0 +1,35 @@
+[project]
+name = "novi-plugin-host"
+version = "0.1.0"
+description = "Add your description here"
+authors = [
+    { name = "mivik", email = "mivikq@gmail.com" }
+]
+dependencies = [
+    "novi-py @ git+https://github.com/project-novi/novi-py",
+    "grpcio>=1.64.0",
+    "structlog>=24.1.0",
+    "pydantic>=2.7.1",
+    "pyyaml>=6.0.1",
+]
+readme = "README.md"
+requires-python = ">= 3.8"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.rye]
+managed = true
+dev-dependencies = [
+    "pillow>=10.3.0",
+]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/novi_plugin_host"]
+
+[tool.rye.workspace]
+members = ["plugins/*"]
