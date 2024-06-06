@@ -25,6 +25,9 @@ dev-dependencies = [
     "pillow>=10.3.0",
 ]
 
+[tool.rye.scripts]
+novi-plugin-host = { call = "novi_plugin_host" }
+
 [tool.hatch.metadata]
 allow-direct-references = true
 
