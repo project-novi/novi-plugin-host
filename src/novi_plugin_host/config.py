@@ -7,7 +7,7 @@ from typing import List, Optional, Set
 class Config(BaseModel):
     server: str = 'unix:/tmp/novi.socket'
     master_key: str
-    storage_path: Path = Path('storage')
+    ipfs_gateway: str = 'http://127.0.0.1:8080'
     plugins_path: Path = Path('plugins')
 
 

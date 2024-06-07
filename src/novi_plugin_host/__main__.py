@@ -28,7 +28,6 @@ def init_log():
 
 
 def init(config: Config):
-    config.storage_path.mkdir(parents=True, exist_ok=True)
     config.plugins_path.mkdir(parents=True, exist_ok=True)
 
 

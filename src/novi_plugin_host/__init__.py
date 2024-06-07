@@ -173,7 +173,7 @@ def load_plugins(config: Config, session: Session) -> List[sp.Popen]:
             config_template=str(
                 (desc.dir / plugin_config.config_template).resolve()
             ),
-            storage_path=config.storage_path.resolve(),
+            ipfs_gateway=config.ipfs_gateway,
             main=desc.main,
         )
 

@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from pydantic import BaseModel
 
-from novi.file import set_storage_path
+from novi.file import set_ipfs_gateway
 from novi.plugin import initialize, join
 
 from typing import Optional, Tuple
@@ -41,7 +41,7 @@ class EntryConfig(BaseModel):
     server: str
     identity: str
     config_template: Optional[Path]
-    storage_path: Path
+    ipfs_gateway: str
 
     main: EntryMain
 
@@ -51,7 +51,7 @@ if __name__ == '__main__':
     if not config.config_template.exists():
         config.config_template = None
 
-    set_storage_path(config.storage_path)
+    set_ipfs_gateway(config.ipfs_gateway)
 
     initialize(
         server=config.server,
