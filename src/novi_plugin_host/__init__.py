@@ -168,6 +168,7 @@ def load_plugins(config: Config, session: Session) -> List[sp.Popen]:
         identity = session.login_as(user.id)
 
         entry_config = EntryConfig(
+            identifier=identifier,
             server=server,
             identity=identity.token,
             config_template=str(

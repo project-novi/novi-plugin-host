@@ -10,6 +10,8 @@ from pydantic import BaseModel
 from novi.file import set_ipfs_gateway
 from novi.plugin import initialize, join
 
+from .misc import init_log
+
 from typing import Optional, Tuple
 
 if sys.version_info < (3, 10):
@@ -38,6 +40,8 @@ class EntryMain(BaseModel):
 
 
 class EntryConfig(BaseModel):
+    identifier: str
+
     server: str
     identity: str
     config_template: Optional[Path]
@@ -47,6 +51,8 @@ class EntryConfig(BaseModel):
 
 
 if __name__ == '__main__':
+    init_log()
+
     config = EntryConfig.model_validate_json(input())
     if not config.config_template.exists():
         config.config_template = None
@@ -54,6 +60,7 @@ if __name__ == '__main__':
     set_ipfs_gateway(config.ipfs_gateway)
 
     initialize(
+        identifier=config.identifier,
         server=config.server,
         identity=config.identity,
         plugin_dir=Path(os.getcwd()),

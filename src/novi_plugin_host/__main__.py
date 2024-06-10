@@ -1,30 +1,11 @@
 import grpc
-import logging
-import structlog
 import yaml
 
 from novi import Client
 
 from . import load_plugins
 from .config import Config
-
-
-def init_log():
-    structlog.configure(
-        wrapper_class=structlog.make_filtering_bound_logger(logging.INFO)
-    )
-
-    formatter = structlog.stdlib.ProcessorFormatter(
-        processors=structlog.get_config()['processors'],
-    )
-
-    logging.basicConfig(level=logging.INFO)
-
-    handler = logging.StreamHandler()
-    handler.setFormatter(formatter)
-    root_logger = logging.getLogger()
-    root_logger.addHandler(handler)
-    root_logger.setLevel(logging.DEBUG)
+from .misc import init_log
 
 
 def init(config: Config):
