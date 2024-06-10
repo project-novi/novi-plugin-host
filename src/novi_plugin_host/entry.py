@@ -67,6 +67,8 @@ if __name__ == '__main__':
         config_template=config.config_template,
     )
 
-    config.main.run()
-
-    join()
+    try:
+        config.main.run()
+        join()
+    except KeyboardInterrupt:
+        pass

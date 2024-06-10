@@ -26,5 +26,8 @@ with grpc.insecure_channel(
         session.identity = identity
 
         children = load_plugins(config, session)
-        for child in children:
-            child.wait()
+        try:
+            for child in children:
+                child.wait()
+        except KeyboardInterrupt:
+            pass
