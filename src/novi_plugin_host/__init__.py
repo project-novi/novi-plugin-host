@@ -1,26 +1,24 @@
 import atexit
 import json
-import subprocess as sp
-import sys
+import multiprocessing as mp
 import yaml
 
 from dataclasses import dataclass
+from importlib.metadata import entry_points
 from importlib.util import find_spec
 from itertools import chain
 from pathlib import Path
 from pydantic import ValidationError
 from structlog import get_logger
+from toposort import toposort_flatten
 
 from novi import Session
 
 from .config import Config, PluginConfig
+from .entry import entry_main
 
-from typing import Any, Dict, Iterator, List, Optional, Set, TYPE_CHECKING
-
-if sys.version_info < (3, 10):
-    from importlib_metadata import entry_points
-else:
-    from importlib.metadata import entry_points
+from collections.abc import Iterator
+from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .entry import EntryMain
@@ -30,7 +28,7 @@ lg = get_logger()
 plugins = {}
 
 
-def plugin_user(session: Session, identifier: str, permissions: Set[str]):
+def plugin_user(session: Session, identifier: str, permissions: set[str]):
     users = session.query(
         f'@user @user.role:plugin @user.name={json.dumps(identifier)}'
     )
@@ -54,7 +52,7 @@ def plugin_user(session: Session, identifier: str, permissions: Set[str]):
     return user
 
 
-def load_plugin_config(dir: Path, default: dict) -> Optional[PluginConfig]:
+def load_plugin_config(dir: Path, default: dict) -> PluginConfig | None:
     try:
         config = default
         with (dir / 'plugin.yaml').open() as f:
@@ -72,7 +70,7 @@ def load_plugin_config(dir: Path, default: dict) -> Optional[PluginConfig]:
 class PluginDesc:
     dir: Path
     main: 'EntryMain'
-    default_config: Dict[str, Any]
+    default_config: dict[str, Any]
 
 
 def find_package_plugins() -> Iterator[PluginDesc]:
@@ -80,7 +78,7 @@ def find_package_plugins() -> Iterator[PluginDesc]:
 
     entries = entry_points(group='novi.plugin')
     for entry in entries:
-        lg.info('loading plugin from module', entry=entry)
+        lg.debug('loading plugin from module', entry=entry)
 
         dir = Path(find_spec(entry.module).origin).parent
 
@@ -117,11 +115,10 @@ def find_simple_plugins(plugin_dir: Path) -> Iterator[PluginDesc]:
         if any(not (dir / f).is_file() for f in ('main.py', 'plugin.yaml')):
             continue
 
-        lg.info('loading plugin from directory', dir=dir)
+        lg.debug('loading plugin from directory', dir=dir)
 
         config = {
             'name': dir.name,
-            'identifier': 'simple.' + dir.name,
         }
         yield PluginDesc(
             dir=dir,
@@ -130,16 +127,34 @@ def find_simple_plugins(plugin_dir: Path) -> Iterator[PluginDesc]:
         )
 
 
-def load_plugins(config: Config, session: Session) -> List[sp.Popen]:
+def load_plugins(config: Config, session: Session) -> list[mp.Process]:
     from .entry import EntryConfig
 
     plugin_data_dir = Path('data')
     server = config.server
 
+    @dataclass
+    class PluginState:
+        cwd: Path
+        config: PluginConfig
+        entry_config: EntryConfig
+
+        def spawn(self):
+            lg.info('loading plugin', identifier=self.config.identifier)
+            registered = mp.Event()
+            child = mp.Process(
+                target=entry_main,
+                args=(self.entry_config, self.cwd, registered),
+            )
+            child.start()
+            registered.wait()
+            atexit.register(child.terminate)
+            return child
+
     plugin_descs = chain(
         find_package_plugins(), find_simple_plugins(config.plugins_path)
     )
-    children = []
+    plugins: dict[str, PluginState] = {}
     for desc in plugin_descs:
         try:
             plugin_config = desc.default_config
@@ -171,23 +186,37 @@ def load_plugins(config: Config, session: Session) -> List[sp.Popen]:
             identifier=identifier,
             server=server,
             identity=identity.token,
-            config_template=str(
-                (desc.dir / plugin_config.config_template).resolve()
-            ),
+            config_template=(
+                desc.dir / plugin_config.config_template
+            ).resolve(),
             ipfs_gateway=config.ipfs_gateway,
             main=desc.main,
         )
 
         plugin_dir = plugin_data_dir / identifier
         plugin_dir.mkdir(parents=True, exist_ok=True)
-        child = sp.Popen(
-            [sys.executable, '-m', f'{__name__}.entry'],
-            cwd=str(plugin_dir),
-            stdin=sp.PIPE,
-        )
-        child.stdin.write(entry_config.model_dump_json().encode() + b'\n')
-        child.stdin.flush()
-        atexit.register(child.terminate)
-        children.append(child)
 
-    return children
+        plugins[identifier] = PluginState(
+            plugin_dir, plugin_config, entry_config
+        )
+
+    dependencies = {}
+    for identifier, state in plugins.items():
+        deps = set()
+        for req in state.config.requirements:
+            if not req.startswith('depends:'):
+                lg.warn('unknown requirement', requirement=req)
+
+            dep = req[len('depends:') :]
+            if dep not in plugins:
+                raise ValueError(f'missing dependency {dep}')
+
+            deps.add(dep)
+
+        dependencies[identifier] = deps
+
+    mp.set_start_method('spawn')
+    return [
+        plugins[identifier].spawn()
+        for identifier in toposort_flatten(dependencies)
+    ]

@@ -1,7 +1,7 @@
 import grpc
 import yaml
 
-from novi import Client
+from novi import Client, SessionMode
 
 from . import load_plugins
 from .config import Config
@@ -22,12 +22,14 @@ with grpc.insecure_channel(
 ) as channel:
     client = Client(channel)
     identity = client.use_master_key(config.master_key)
-    with client.session(lock=None, identity=identity) as session:
+    with client.session(
+        SessionMode.IMMEDIATE, identity=identity
+    ) as session:
         session.identity = identity
 
         children = load_plugins(config, session)
         try:
             for child in children:
-                child.wait()
+                child.join()
         except KeyboardInterrupt:
             pass
