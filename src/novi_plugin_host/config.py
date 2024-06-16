@@ -2,11 +2,18 @@ from pathlib import Path
 from pydantic import BaseModel
 
 
+class PluginConfig(BaseModel):
+    extra_permissions: set[str] = set()
+    is_admin: bool = False
+
+
 class Config(BaseModel):
     server: str = 'unix:/tmp/novi.socket'
     master_key: str
     ipfs_gateway: str = 'http://127.0.0.1:8080'
     plugins_path: Path = Path('plugins')
+
+    plugin_config: dict[str, PluginConfig] = {}
 
 
 class PluginMetadata(BaseModel):

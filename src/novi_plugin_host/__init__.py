@@ -14,7 +14,7 @@ from toposort import toposort_flatten
 
 from novi import Session
 
-from .config import Config, PluginMetadata
+from .config import Config, PluginConfig, PluginMetadata
 from .entry import EntryConfig, entry_main
 
 from collections.abc import Iterator
@@ -129,6 +129,7 @@ def find_simple_plugins(plugin_dir: Path) -> Iterator[PluginDesc]:
 
 class PluginState:
     plugin_dir: Path
+    config: PluginConfig
     metadata: PluginMetadata
     entry_config: EntryConfig
     dependencies: set[str]
@@ -139,11 +140,13 @@ class PluginState:
     def __init__(
         self,
         plugin_dir: Path,
-        config: PluginMetadata,
+        config: PluginConfig,
+        metadata: PluginMetadata,
         entry_config: EntryConfig,
     ):
         self.plugin_dir = plugin_dir
-        self.metadata = config
+        self.config = config
+        self.metadata = metadata
         self.entry_config = entry_config
         self.dependencies = set()
         self.depended_by = set()
@@ -199,7 +202,16 @@ def load_plugins(
         if identifier in plugins:
             raise ValueError(f'duplicate plugin identifier: {identifier}')
 
-        user = plugin_user(session, identifier, plugin_meta.permissions)
+        plugin_config = config.plugin_config.get(identifier, PluginConfig())
+
+        user = plugin_user(
+            session,
+            identifier,
+            plugin_meta.permissions | plugin_config.extra_permissions,
+        )
+        if plugin_config.is_admin:
+            user.set('@user.role:admin')
+
         identity = session.login_as(user.id)
 
         entry_config = EntryConfig(
@@ -215,7 +227,7 @@ def load_plugins(
         plugin_dir.mkdir(parents=True, exist_ok=True)
 
         plugins[identifier] = PluginState(
-            plugin_dir, plugin_meta, entry_config
+            plugin_dir, plugin_config, plugin_meta, entry_config
         )
 
     dependencies = {}
