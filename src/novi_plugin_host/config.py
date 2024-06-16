@@ -9,7 +9,7 @@ class Config(BaseModel):
     plugins_path: Path = Path('plugins')
 
 
-class PluginConfig(BaseModel):
+class PluginMetadata(BaseModel):
     name: str
     identifier: str
     description: str = ''

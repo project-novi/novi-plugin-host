@@ -14,8 +14,8 @@ from toposort import toposort_flatten
 
 from novi import Session
 
-from .config import Config, PluginConfig
-from .entry import entry_main
+from .config import Config, PluginMetadata
+from .entry import EntryConfig, entry_main
 
 from collections.abc import Iterator
 from typing import Any, TYPE_CHECKING
@@ -52,12 +52,12 @@ def plugin_user(session: Session, identifier: str, permissions: set[str]):
     return user
 
 
-def load_plugin_config(dir: Path, default: dict) -> PluginConfig | None:
+def load_plugin_config(dir: Path, default: dict) -> PluginMetadata | None:
     try:
         config = default
         with (dir / 'plugin.yaml').open() as f:
             config.update(yaml.safe_load(f))
-        return PluginConfig.model_validate(config)
+        return PluginMetadata.model_validate(config)
     except FileNotFoundError:
         lg.error('plugin config not found')
     except ValidationError:
@@ -70,7 +70,7 @@ def load_plugin_config(dir: Path, default: dict) -> PluginConfig | None:
 class PluginDesc:
     dir: Path
     main: 'EntryMain'
-    default_config: dict[str, Any]
+    default_meta: dict[str, Any]
 
 
 def find_package_plugins() -> Iterator[PluginDesc]:
@@ -102,7 +102,7 @@ def find_package_plugins() -> Iterator[PluginDesc]:
         yield PluginDesc(
             dir=dir,
             main=EntryMain(entry_point=(entry.name, entry.value, entry.group)),
-            default_config=config,
+            default_meta=config,
         )
 
 
@@ -123,33 +123,53 @@ def find_simple_plugins(plugin_dir: Path) -> Iterator[PluginDesc]:
         yield PluginDesc(
             dir=dir,
             main=EntryMain(file_path=str((dir / 'main.py').resolve())),
-            default_config=config,
+            default_meta=config,
         )
 
 
-def load_plugins(config: Config, session: Session) -> list[mp.Process]:
-    from .entry import EntryConfig
+class PluginState:
+    plugin_dir: Path
+    metadata: PluginMetadata
+    entry_config: EntryConfig
+    dependencies: set[str]
+    depended_by: set[str]
 
+    process: mp.Process | None = None
+
+    def __init__(
+        self,
+        plugin_dir: Path,
+        config: PluginMetadata,
+        entry_config: EntryConfig,
+    ):
+        self.plugin_dir = plugin_dir
+        self.metadata = config
+        self.entry_config = entry_config
+        self.dependencies = set()
+        self.depended_by = set()
+
+    @property
+    def identifier(self):
+        return self.metadata.identifier
+
+    def spawn(self):
+        lg.info('loading plugin', identifier=self.metadata.identifier)
+        registered = mp.Event()
+        child = mp.Process(
+            target=entry_main,
+            args=(self.entry_config, self.plugin_dir, registered),
+        )
+        child.start()
+        registered.wait()
+        atexit.register(child.terminate)
+        self.process = child
+
+
+def load_plugins(
+    config: Config, session: Session
+) -> tuple[dict[str, PluginState], list[str]]:
     plugin_data_dir = Path('data')
     server = config.server
-
-    @dataclass
-    class PluginState:
-        cwd: Path
-        config: PluginConfig
-        entry_config: EntryConfig
-
-        def spawn(self):
-            lg.info('loading plugin', identifier=self.config.identifier)
-            registered = mp.Event()
-            child = mp.Process(
-                target=entry_main,
-                args=(self.entry_config, self.cwd, registered),
-            )
-            child.start()
-            registered.wait()
-            atexit.register(child.terminate)
-            return child
 
     plugin_descs = chain(
         find_package_plugins(), find_simple_plugins(config.plugins_path)
@@ -157,14 +177,14 @@ def load_plugins(config: Config, session: Session) -> list[mp.Process]:
     plugins: dict[str, PluginState] = {}
     for desc in plugin_descs:
         try:
-            plugin_config = desc.default_config
+            plugin_meta = desc.default_meta
 
             with (desc.dir / 'plugin.yaml').open() as f:
                 content = yaml.safe_load(f)
                 if content is not None:
-                    plugin_config.update(content)
+                    plugin_meta.update(content)
 
-            plugin_config = PluginConfig.model_validate(plugin_config)
+            plugin_meta = PluginMetadata.model_validate(plugin_meta)
 
         except FileNotFoundError:
             lg.error('plugin config not found')
@@ -173,22 +193,20 @@ def load_plugins(config: Config, session: Session) -> list[mp.Process]:
             lg.exception('invalid plugin config')
             continue
 
-        lg.debug('plugin config', config=plugin_config.model_dump())
+        lg.debug('plugin config', config=plugin_meta.model_dump())
 
-        identifier = plugin_config.identifier
+        identifier = plugin_meta.identifier
         if identifier in plugins:
             raise ValueError(f'duplicate plugin identifier: {identifier}')
 
-        user = plugin_user(session, identifier, plugin_config.permissions)
+        user = plugin_user(session, identifier, plugin_meta.permissions)
         identity = session.login_as(user.id)
 
         entry_config = EntryConfig(
             identifier=identifier,
             server=server,
             identity=identity.token,
-            config_template=(
-                desc.dir / plugin_config.config_template
-            ).resolve(),
+            config_template=(desc.dir / plugin_meta.config_template).resolve(),
             ipfs_gateway=config.ipfs_gateway,
             main=desc.main,
         )
@@ -197,13 +215,12 @@ def load_plugins(config: Config, session: Session) -> list[mp.Process]:
         plugin_dir.mkdir(parents=True, exist_ok=True)
 
         plugins[identifier] = PluginState(
-            plugin_dir, plugin_config, entry_config
+            plugin_dir, plugin_meta, entry_config
         )
 
     dependencies = {}
     for identifier, state in plugins.items():
-        deps = set()
-        for req in state.config.requirements:
+        for req in state.metadata.requirements:
             if not req.startswith('depends:'):
                 lg.warn('unknown requirement', requirement=req)
 
@@ -211,12 +228,16 @@ def load_plugins(config: Config, session: Session) -> list[mp.Process]:
             if dep not in plugins:
                 raise ValueError(f'missing dependency {dep}')
 
-            deps.add(dep)
+            plugins[dep].depended_by.add(identifier)
+            state.dependencies.add(dep)
 
-        dependencies[identifier] = deps
+        dependencies[identifier] = state.dependencies
 
     mp.set_start_method('spawn')
-    return [
+
+    topo = toposort_flatten(dependencies)
+
+    for identifier in topo:
         plugins[identifier].spawn()
-        for identifier in toposort_flatten(dependencies)
-    ]
+
+    return plugins, topo
