@@ -3,6 +3,7 @@ from pydantic import BaseModel
 
 
 class PluginConfig(BaseModel):
+    disabled: bool = False
     extra_permissions: set[str] = set()
     is_admin: bool = False
 

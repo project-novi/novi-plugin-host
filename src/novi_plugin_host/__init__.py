@@ -52,12 +52,12 @@ def plugin_user(session: Session, identifier: str, permissions: set[str]):
     return user
 
 
-def load_plugin_config(dir: Path, default: dict) -> PluginMetadata | None:
+def load_plugin_metadata(dir: Path, default: dict) -> PluginMetadata | None:
     try:
-        config = default
+        meta = default
         with (dir / 'plugin.yaml').open() as f:
-            config.update(yaml.safe_load(f))
-        return PluginMetadata.model_validate(config)
+            meta.update(yaml.safe_load(f))
+        return PluginMetadata.model_validate(meta)
     except FileNotFoundError:
         lg.error('plugin config not found')
     except ValidationError:
@@ -190,19 +190,22 @@ def load_plugins(
             plugin_meta = PluginMetadata.model_validate(plugin_meta)
 
         except FileNotFoundError:
-            lg.error('plugin config not found')
+            lg.error('plugin metadata not found')
             continue
         except ValidationError:
-            lg.exception('invalid plugin config')
+            lg.exception('invalid plugin metadata')
             continue
 
-        lg.debug('plugin config', config=plugin_meta.model_dump())
+        lg.debug('plugin metadata', metadata=plugin_meta.model_dump())
 
         identifier = plugin_meta.identifier
         if identifier in plugins:
             raise ValueError(f'duplicate plugin identifier: {identifier}')
 
         plugin_config = config.plugin_config.get(identifier, PluginConfig())
+        if plugin_config.disabled:
+            lg.info('plugin disabled', identifier=identifier)
+            continue
 
         user = plugin_user(
             session,
