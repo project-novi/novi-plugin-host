@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from importlib.metadata import EntryPoint
 from pathlib import Path
 
-from novi.file import set_ipfs_gateway
 from novi.plugin import initialize, join, ajoin
 
 from .misc import init_log
@@ -54,14 +53,13 @@ def entry_main(config: EntryConfig, plugin_dir: Path, registered: mp.Event):
     if not config.config_template.exists():
         config.config_template = None
 
-    set_ipfs_gateway(config.ipfs_gateway)
-
     initialize(
         identifier=config.identifier,
         server=config.server,
         identity=config.identity,
         plugin_dir=Path(os.getcwd()),
         config_template=config.config_template,
+        ipfs_gateway=config.ipfs_gateway,
     )
 
     asyncio.run(_async_entry_main(config.main, registered))
